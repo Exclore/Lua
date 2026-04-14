@@ -76,17 +76,41 @@ do
             index
     end
 
+    local lengths = {
+        [string.encoding.ascii] = function(_)
+            return 1
+        end,
+        [string.encoding.utf8] = function(byte)
+            return
+                byte < 0x80 and 1 or
+                byte < 0xE0 and 2 or
+                byte < 0xF0 and 3 or
+                byte < 0xF8 and 4
+        end,
+        [string.encoding.shift_jis] = function(byte)
+            return
+                (byte <= 0x1D or byte >= 0x20 and byte < 0x80 or byte >= 0xA1 and byte <= 0xDF) and 1 or
+                (byte >= 0x1E and byte <= 0x1F or byte >= 0x80 and byte <= 0x9F or byte >= 0xE0 and byte <= 0xEF or byte >= 0xFA and byte <= 0xFC) and 2 or
+                byte == 0xFD and 6
+        end,
+        [string.encoding.binary] = function(_)
+            return 1
+        end,
+    }
+
     do
-        local process = function(str, from, to, fn)
+        local process = function(str, from, to, encoding)
             local index = from
+            local fn = lengths[encoding]
             return function()
                 if index > to then
                     return nil
                 end
 
-                local length = fn(str:byte(index, index))
+                local byte = str:byte(index, index)
+                local length = fn(byte)
                 if length == false then
-                    _raw.error('Invalid code point')
+                    _raw.error(('Invalid code point: %02X (%s)'):format(byte, tostring(encoding)))
                 end
 
                 index = index + length
@@ -99,21 +123,10 @@ do
                 return str:sub(from, to):gmatch('.')
             end,
             [string.encoding.utf8] = function(str, from, to)
-                return process(str, from, to, function(byte)
-                    return
-                        byte < 0x80 and 1 or
-                        byte < 0xE0 and 2 or
-                        byte < 0xF0 and 3 or
-                        byte < 0xF8 and 4
-                end)
+                return process(str, from, to, string.encoding.utf8)
             end,
             [string.encoding.shift_jis] = function(str, from, to)
-                return process(str, from, to, function(byte)
-                    return
-                        (byte < 0x80 or byte >= 0xA1 and byte <= 0xDF) and 1 or
-                        (byte >= 0x1E and byte <= 0x1F or byte >= 0x80 and byte <= 0x9F or byte >= 0xE0 and byte <= 0xEF or byte >= 0xFA and byte <= 0xFC) and 2 or
-                        byte == 0xFD and 6
-                end)
+                return process(str, from, to, string.encoding.shift_jis)
             end,
             [string.encoding.binary] = function(str, from, to)
                 return str:sub(from, to):gmatch('.')
@@ -128,72 +141,71 @@ do
         end
     end
 
-    local all = function() return true end
-    local lower = function(b) return b >= 0x61 and b <= 0x7A end
-    local upper = function(b) return b >= 0x41 and b <= 0x5A end
-    local control = function(b) return b == 0x7F or b < 0x20 end
-    local punctuation = function(b) return b >= 0x21 and b <= 0x2F or b >= 0x3A and b <= 0x40 or b >= 0x5B and b <= 0x60 or b >= 0x7B and b <= 0x7E end
-    local letter = function(b) return lower(b) or upper(b) end
-    local digit = function(b) return b >= 0x30 and b <= 0x39 end
-    local space = function(b) return b == 0x20 or b == 0x0A or b == 0x07 or b == 0x09 end
-    local hex = function(b) return b >= 0x30 and b <= 0x39 or b >= 0x41 and b <= 0x46 or b >= 0x63 and b <= 0x66 end
-    local zero = function(b) return b == 0x00 end
-    local utf8_letter = function(b) return not control(b) and not digit(b) and not punctuation(b) and not space(b) end
-    local shift_jis_letter = function(b) return letter(b) or b >= 0xA1 and b <= 0xDF or b >= 0x823F and b <= 0x8491 or b >= 0x889F and b <= 0x9872 or b >= 0x989F and b <= 0xEAA4 end
-    local none = function() return false end
-    local classes = {
-        [string.encoding.ascii] = {
-            a = letter,
-            c = control,
-            d = digit,
-            l = lower,
-            p = punctuation,
-            u = upper,
-            s = space,
-            w = function(b) return letter(b) or digit(b) end,
-            x = hex,
-            z = zero,
-        },
-        [string.encoding.utf8] = {
-            a = utf8_letter,
-            c = control,
-            d = digit,
-            l = lower,
-            p = punctuation,
-            u = upper,
-            s = space,
-            w = function(b) return utf8_letter(b) or digit(b) end,
-            x = hex,
-            z = zero,
-        },
-        [string.encoding.shift_jis] = {
-            a = shift_jis_letter,
-            c = function(b) return control(b) or b >= 0x1E00 and b <= 0x1FFF or b >= 0xFD00000000FD and b <= 0xFDFFFFFFFFFD end,
-            d = digit,
-            l = lower,
-            p = function(b) return punctuation(b) or b >= 0x8140 and b <= 0x81FC or b >= 0x849F and b <= 0x84BE or b >= 0x8740 and b <= 0x849C end,
-            u = upper,
-            s = space,
-            w = function(b) return shift_jis_letter(b) or digit(b) end,
-            x = hex,
-            z = zero,
-        },
-        [string.encoding.binary] = {
-            a = none,
-            c = none,
-            d = none,
-            l = none,
-            p = none,
-            u = none,
-            s = none,
-            w = none,
-            x = none,
-            z = zero,
-        },
-    }
-
+    local find
     do
-        _raw.string.find = string.find
+        local all = function() return true end
+        local lower = function(b) return b >= 0x61 and b <= 0x7A end
+        local upper = function(b) return b >= 0x41 and b <= 0x5A end
+        local control = function(b) return b == 0x7F or b < 0x20 end
+        local punctuation = function(b) return b >= 0x21 and b <= 0x2F or b >= 0x3A and b <= 0x40 or b >= 0x5B and b <= 0x60 or b >= 0x7B and b <= 0x7E end
+        local letter = function(b) return lower(b) or upper(b) end
+        local digit = function(b) return b >= 0x30 and b <= 0x39 end
+        local space = function(b) return b == 0x20 or b == 0x0A or b == 0x07 or b == 0x09 end
+        local hex = function(b) return b >= 0x30 and b <= 0x39 or b >= 0x41 and b <= 0x46 or b >= 0x63 and b <= 0x66 end
+        local zero = function(b) return b == 0x00 end
+        local utf8_letter = function(b) return not control(b) and not digit(b) and not punctuation(b) and not space(b) end
+        local shift_jis_letter = function(b) return letter(b) or b >= 0xA1 and b <= 0xDF or b >= 0x823F and b <= 0x8491 or b >= 0x889F and b <= 0x9872 or b >= 0x989F and b <= 0xEAA4 end
+        local none = function() return false end
+        local classes = {
+            [string.encoding.ascii] = {
+                a = letter,
+                c = control,
+                d = digit,
+                l = lower,
+                p = punctuation,
+                u = upper,
+                s = space,
+                w = function(b) return letter(b) or digit(b) end,
+                x = hex,
+                z = zero,
+            },
+            [string.encoding.utf8] = {
+                a = utf8_letter,
+                c = control,
+                d = digit,
+                l = lower,
+                p = punctuation,
+                u = upper,
+                s = space,
+                w = function(b) return utf8_letter(b) or digit(b) end,
+                x = hex,
+                z = zero,
+            },
+            [string.encoding.shift_jis] = {
+                a = shift_jis_letter,
+                c = function(b) return control(b) or b >= 0x1E00 and b <= 0x1FFF or b >= 0xFD00000000FD and b <= 0xFDFFFFFFFFFD end,
+                d = digit,
+                l = lower,
+                p = function(b) return punctuation(b) or b >= 0x8140 and b <= 0x81FC or b >= 0x849F and b <= 0x84BE or b >= 0x8740 and b <= 0x849C end,
+                u = upper,
+                s = space,
+                w = function(b) return shift_jis_letter(b) or digit(b) end,
+                x = hex,
+                z = zero,
+            },
+            [string.encoding.binary] = {
+                a = none,
+                c = none,
+                d = none,
+                l = none,
+                p = none,
+                u = none,
+                s = none,
+                w = none,
+                x = none,
+                z = zero,
+            },
+        }
 
         local findplain = function(str, pattern, encoding, from, to)
             local offset = #pattern - 1
@@ -227,7 +239,7 @@ do
         local bytes = function(c)
             local value = 0
             for i = 1, #c do
-                value = value * 0x100 + string.byte(c, i, i)
+                value = value * 0x100 + c:byte(i, i)
             end
             return value
         end
@@ -394,9 +406,11 @@ do
 
                 local allcaptures = {{pos, inner_to}, unpack(inner_captures or {})}
                 local count = #allcaptures
-                for i = 1, #(captures or {}) do
-                    count = count + 1
-                    allcaptures[count] = captures[i]
+                if captures ~= nil then
+                    for i = 1, #captures do
+                        count = count + 1
+                        allcaptures[count] = captures[i]
+                    end
                 end
 
                 return to, allcaptures
@@ -580,7 +594,7 @@ do
             end,
         })
 
-        local find = function(plain, str, pattern, encoding, from, to)
+        find = function(plain, str, pattern, encoding, from, to)
             if plain then
                 return findplain(str, pattern, encoding, from, to)
             else
@@ -598,6 +612,10 @@ do
                 return matches.from + offset, matches.to + offset, unpack(matches.captures)
             end
         end
+    end
+
+    do
+        _raw.string.find = string.find
 
         function string.find(str, pattern, encoding, from, to, plain)
             if type(encoding) ~= 'table' then
@@ -642,12 +660,28 @@ do
                 return _raw.string.match(str, pattern, from)
             end
 
-            return process(str, string.find(str, pattern, adjust_from(str, from), false, encoding, adjust_to(str, to)))
+            return process(str, find(false, str, pattern, encoding, adjust_from(str, from), adjust_to(str, to)))
         end
     end
 
     do
         _raw.string.gmatch = string.gmatch
+
+        local process = function(str, length, pos, first, last, ...)
+            if not first then
+                return nil, nil
+            end
+
+            local next = last >= pos
+                and last + 1
+                or pos + length(str:byte(pos, pos))
+
+            if select('#', ...) == 0 then
+                return next, str:sub(first, last)
+            end
+
+            return next, ...
+        end
 
         function string.gmatch(str, pattern, encoding, from, to)
             if type(encoding) ~= 'table' then
@@ -659,29 +693,18 @@ do
             end
 
             to = adjust_to(str, to)
+            from = adjust_from(str, from)
 
-            local pos = adjust_from(str, from)
-            local process = function(first, last, ...)
-                if not first then
-                    return nil
-                end
+            local pos = from
+            local length = lengths[encoding]
 
-                if last >= pos then
-                    pos = last + 1
-                else
-                    local char = str:it(encoding, pos)()
-                    pos = pos + #char
-                end
-
-                if select('#', ...) == 0 then
-                    return str:sub(first, last)
-                end
-
+            local iterate = function(next, ...)
+                pos = next
                 return ...
             end
 
             return function()
-                return process(string.find(str, pattern, encoding, pos, to))
+                return iterate(process(str, length, pos, find(false, str, pattern, encoding, pos, to)))
             end
         end
     end
@@ -709,7 +732,7 @@ do
             local fragments = {}
             local count = 0
             local pos = adjust_from(str, from)
-            local first, last = string.find(str, pattern, encoding, pos, to)
+            local first, last = find(false, str, pattern, encoding, pos, to)
             while first do
                 count = count + 1
                 fragments[count] = str:sub(pos, first - 1)
@@ -719,7 +742,7 @@ do
                     break
                 end
                 pos = last + 1
-                first, last = string.find(str, pattern, encoding, pos, to)
+                first, last = find(false, str, pattern, encoding, pos, to)
             end
 
             return table.concat(fragments) .. str:sub(pos)
@@ -740,9 +763,8 @@ do
             end
 
             maxsplit = maxsplit or 0
-            if raw == nil then
-                raw = true
-            end
+            raw = raw == nil or raw
+            to = adjust_to(str, to)
 
             local res = {}
             local count = 0
@@ -751,7 +773,7 @@ do
             local match
             local length = to or #str
             while pos <= length + 1 do
-                startpos, endpos = str:find(sep, encoding, pos, to, raw)
+                startpos, endpos = find(raw, str, sep, encoding, pos, to)
                 if not startpos then
                     count = count + 1
                     res[count] = str:sub(pos)
@@ -796,6 +818,60 @@ do
             end
 
             return res
+        end
+    end
+
+    do
+        _raw.string.lower = string.lower
+        _raw.string.upper = string.upper
+
+        local upper_min = 0x41
+        local upper_max = 0x5A
+        local lower_min = 0x61
+        local lower_max = 0x7A
+
+        local process = function(str, encoding, from, to, min, max, modify)
+            if type(encoding) ~= 'table' then
+                encoding, from, to = string.encoding.ascii, encoding, from
+            end
+
+            if encoding == string.encoding.ascii and from == nil and to == nil then
+                return modify(str)
+            end
+
+            from = adjust_from(str, from)
+            to = adjust_to(str, to)
+
+            local result = ''
+
+            local last_change = false
+            local last = 1
+            local pos = from
+            for c in str:it(encoding, from, to) do
+                local b = c:byte()
+                local change = b >= min and b <= max
+                if last_change ~= change then
+                    local sub = str:sub(last, pos - 1)
+                    if last_change then
+                        sub = modify(sub)
+                    end
+                    result = result .. sub
+                    last_change = change
+                    last = pos
+                end
+
+                pos = pos + #c
+            end
+
+            return result .. str:sub(last)
+        end
+
+        function string.lower(str, encoding, from, to)
+            return process(str, encoding, from, to, upper_min, upper_max, _raw.string.lower)
+        end
+
+        function string.upper(str, encoding, from, to)
+            return process(str, encoding, from, to, lower_min, lower_max, _raw.string.upper)
         end
     end
 end

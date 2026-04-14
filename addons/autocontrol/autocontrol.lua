@@ -168,21 +168,27 @@ function set_attachments_from_autoset(autoset,slot)
             if petlessZones:contains(windower.ffxi.get_info().zone) then 
                 return
             else
-                local recasts = windower.ffxi.get_ability_recasts()
-                if settings.AutoActivate and recasts[recast_ids.activate] == 0 then
-                    windower.send_command('input /ja "Activate" <me>')
-                elseif settings.AutoDeusExAutomata and recasts[recast_ids.deusex] == 0 then
-                    log('Activate is down, using Deus Ex Automata instead.')
-                    windower.send_command('input /ja "Deus Ex Automata" <me>')
-                elseif settings.AutoActivate and settings.AutoDeusExAutomata then
-                    log('Activate and Deus Ex Automata timers were not ready.')
-                elseif settings.AutoActivate then
-                    log('Activate timer was not ready.')
-                elseif settings.AutoDeusExAutomata then
-                    log('Deus Ex Automata timer was not ready.')
-                end
+                coroutine.schedule(activate_puppet, 0.5)
             end
         end
+    end
+end
+
+function activate_puppet()
+    local recasts = windower.ffxi.get_ability_recasts()
+    if settings.AutoActivate and recasts[recast_ids.activate] == 0 then
+        windower.send_command('input /ja "Activate" <me>')
+    elseif settings.AutoDeusExAutomata and recasts[recast_ids.deusex] == 0 then
+        if settings.AutoActivate then
+            log('Activate is down, using Deus Ex Automata instead.')
+        end
+        windower.send_command('input /ja "Deus Ex Automata" <me>')
+    elseif settings.AutoActivate and settings.AutoDeusExAutomata then
+        log('Activate and Deus Ex Automata timers were not ready.')
+    elseif settings.AutoActivate then
+        log('Activate timer was not ready.')
+    elseif settings.AutoDeusExAutomata then
+        log('Deus Ex Automata timer was not ready.')
     end
 end
 
@@ -250,7 +256,7 @@ windower.register_event('addon command', function(comm, ...)
             local attach = args:sconcat()
             add_attachment(attach,slot)
         end
-    elseif comm == 'equipset' then
+    elseif comm == 'equipset' or comm == 'e' or comm == 'equip' then
         if args[1] then
             attach_set(args[1])
         end
@@ -284,7 +290,7 @@ windower.register_event('addon command', function(comm, ...)
         log('  1. help - Brings up this menu.')
         log('  2. setlist - list all saved automaton sets.')
         log('  3. saveset <setname> - saves <setname> to your settings.')
-        log('  4. equipset <setname> - equips <setname> to your automaton.')
+        log('  4. equipset or equip or e <setname> - equips <setname> to your automaton.')
         log('  5. attlist <setname> - gets the attachment list for <setname>')
         log('  6. list - gets the list of currently equipped attachments.')
         log('  7. maneuvertimers - Toggles showing maneuver timers on/off.')
